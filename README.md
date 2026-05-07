@@ -1,0 +1,70 @@
+# Mental RAM & Case Math Engine
+
+### Purpose of this Interface
+I built this interface because I realized that I was struggling with mental math speed and visualizing market sizing structures during case prep. I wanted to build a tool that would help me target my specific weak points and was fully customizable to my own issues. 
+
+I built this in Streamlit and decided to host it locally for the time being. The major advantage of local hosting is the ability to write to a local SQLite database and CSV file, allowing you to persistently track your metrics and visualize your improvement over time. (Hosting it online works as well, but the persistent database would need to be swapped for session-state tracking, meaning your stats would reset every time you refresh the page). 
+
+If you are grinding for case interviews in management consulting (MBB, Tier 2) or high-finance roles, I hope this helps you build the muscle memory required to clear the math hurdles effortlessly.
+
+---
+
+## 🚀 Getting Started
+
+To run this interface, you will need Python installed on your machine. The app runs on **Streamlit**, a fast and powerful open-source Python framework for building machine learning and data science web apps.
+
+### 1. Clone the Repository
+Open your terminal or command prompt and clone this repository to your local machine:
+```bash
+git clone [https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git](https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git)
+cd YOUR_REPO_NAME
+```
+
+### 2. Install Dependencies
+It is highly recommended to use a virtual environment. Once inside the project folder, install the required packages using `pip`. The primary dependencies are Streamlit and Pandas.
+
+
+### 3. Run the Engine
+To launch the app, simply execute the following command in your terminal:
+```bash
+streamlit run app.py
+```
+A local web server will spin up, and the interface will automatically open in your default web browser (usually at `http://localhost:8501`). 
+
+*Note: The first time you run the app or submit an answer, it will automatically generate a local `math_stats.db` (SQLite Database) and a `performance_log.csv` in the same folder to track your metrics.*
+
+---
+
+## 🧠 The Training Modules
+
+This app is designed like a high-performance typing test, but for case math. The cursor auto-focuses after every submission so you never have to touch your mouse.
+
+### Tab 1: Rapid Arithmetic (Mental RAM)
+This is your bread and butter. It tests your raw speed in addition, subtraction, multiplication, and clean division. You can toggle specific operations on or off to target your weakest links.
+
+### Tab 2: Rote Memory Bank
+In case math, you often see a number like 225 and need to immediately recognize it as 15². This tab drills your perfect squares (up to 20) and fraction-to-percentage conversions (e.g., 1/7 = 14.286%). Turn on **Mixed Mode** to train your brain to calculate in reverse (e.g., square roots and finding the denominator from a percentage).
+
+### Tab 3: Zero Gravity Engine (Magnitudes)
+Consulting math is notorious for tripping candidates up with zeros. This module forces you to separate the "Mantissa Math" (e.g., 1.5 / 3 = 0.5) from the "Zero Math" (e.g., Billions / Thousands = Millions) so you never drop a zero under pressure again.
+
+### Tab 4: Fraction & Bounding Simulator
+Calculators aren't allowed in case interviews. This tab generates ugly fractions (e.g., 87 / 643) and forces you to estimate the percentage within a 1% variance. The feedback breaks down the denominator into 10%, 5%, and 1% building blocks to show you how to quickly bound the exact answer.
+
+### Tab 5: Case Interview Scenarios
+This is the ultimate context-switching drill. It randomly generates five of the most common sequential math frameworks seen in case interviews:
+1. **Standard TAM:** Bottom-up market sizing.
+2. **Market Share Target:** Reverse-engineering the market share needed to hit a revenue goal.
+3. **Profitability:** Calculating net profit given volume, price, variable costs, and fixed costs.
+4. **Breakeven Volume:** Calculating exact units required to cover fixed costs.
+5. **Compounding Growth:** Calculating Year 2 revenues based on a starting base and YoY growth rate.
+
+### Tab 6: Performance Dashboard
+If you can maintain 120 WPM on a keyboard, you can train your Calculations Per Minute (CPM) just as rigorously. This dashboard reads your local SQLite database to display your overall accuracy, CPM, and a rolling 10-question moving average chart (filterable by module) to track your progression over time.
+
+---
+
+## 🏁 Conclusion
+Case math is not about innate genius; it is about pattern recognition and mechanical repetition. Treat this tool like a daily warm-up workbench before you dive into live casing or technical assessments. 
+
+Feel free to fork this repository, add your own custom case scenarios to Tab 5, and adjust the logic to fit your specific prep needs. Happy casing!
