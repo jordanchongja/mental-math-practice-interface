@@ -1,11 +1,20 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
+import numpy as np
 import random
 import time
 import math
 from datetime import datetime
 import streamlit.components.v1 as components
+
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
 
 # --- Database & State Initialization ---
 DB_NAME = "math_stats.db"
@@ -64,21 +73,86 @@ def process_answer(tab_name, is_correct):
     log_performance(tab_name, is_correct, elapsed, xp)
     reset_question(tab_name)
 
+# --- Trading Drill Helpers ---
+
+def normalize_direction(text):
+    """Maps free-typed text to 'strengthen' / 'weaken', or None if unrecognized."""
+    t = text.strip().lower()
+    if not t:
+        return None
+    if t.startswith("strength") or t in ("s", "stronger", "strong", "up", "widen", "widening"):
+        return "strengthen"
+    if t.startswith("weak") or t in ("w", "weaker", "down", "narrow", "narrowing"):
+        return "weaken"
+    return None
+
+def normalize_curve_shape(text):
+    """Maps free-typed text to 'contango' / 'backwardation', or None if unrecognized."""
+    t = text.strip().lower()
+    if not t:
+        return None
+    if t.startswith("cont") or t == "c":
+        return "contango"
+    if t.startswith("back") or t == "b":
+        return "backwardation"
+    return None
+
+def normalize_moneyness(text):
+    """Maps free-typed text to 'itm' / 'otm' / 'atm', or None if unrecognized."""
+    t = text.strip().lower().replace("-", " ").replace("_", "")
+    if not t:
+        return None
+    if t in ("itm",) or "in the money" in t or t.startswith("in"):
+        return "itm"
+    if t in ("otm",) or "out of the money" in t or t.startswith("out") or t.startswith("o"):
+        return "otm"
+    if t in ("atm",) or "at the money" in t or t.startswith("at"):
+        return "atm"
+    return None
+
+def fmt_signed(x, decimals=0):
+    return f"{x:+,.{decimals}f}"
+
 def autofocus_active_input():
-    """Forces the cursor back into the visible text input field."""
+    """Forces the cursor back into the visible text input field.
+
+    A single delayed focus() call races against Streamlit's own re-render
+    (the form widget is often torn down and remounted after a submit, e.g.
+    because of clear_on_submit), so a one-shot attempt frequently loses that
+    race and leaves the cursor nowhere - the bug where you have to click back
+    into the box after every Enter. Instead, retry on an interval until an
+    input is actually focused (or we give up after a few seconds).
+    """
     components.html(
         """
         <script>
-        // Find all text inputs in the parent Streamlit window
-        const inputs = window.parent.document.querySelectorAll('input[type="text"]');
-        for (let input of inputs) {
-            // Check if the input is currently visible on the screen (active tab)
-            if (input.offsetParent !== null) {
-                // Slight delay to ensure Streamlit has finished rendering before grabbing focus
-                setTimeout(() => { input.focus(); }, 50); 
-                break;
+        (function() {
+            function focusVisibleInput() {
+                const doc = window.parent.document;
+                const inputs = doc.querySelectorAll('input[type="text"]');
+                for (const input of inputs) {
+                    // Only the input on the active tab has a layout box
+                    if (input.offsetParent !== null) {
+                        if (doc.activeElement !== input) {
+                            input.focus();
+                            const len = input.value.length;
+                            input.setSelectionRange(len, len);
+                        }
+                        return true;
+                    }
+                }
+                return false;
             }
-        }
+
+            let attempts = 0;
+            const maxAttempts = 40; // ~4 seconds at 100ms, covers slow reruns
+            const timer = setInterval(() => {
+                attempts += 1;
+                if (focusVisibleInput() || attempts >= maxAttempts) {
+                    clearInterval(timer);
+                }
+            }, 100);
+        })();
         </script>
         """,
         height=0
@@ -92,9 +166,9 @@ st.sidebar.header("Current Session")
 st.sidebar.metric("Total XP", st.session_state.total_xp)
 st.sidebar.metric("Current Streak", st.session_state.streak)
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "Rapid Math", "Rote Memory", "Zero Gravity", 
-    "Fraction Simulator", "Market Sizing", "Dashboard"
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "Rapid Math", "Rote Memory", "Zero Gravity",
+    "Fraction Simulator", "Market Sizing", "Trading Drills", "Dashboard"
 ])
 
 # --- TAB 1: Rapid Arithmetic ---
@@ -253,31 +327,143 @@ with tab3:
             st.error(st.session_state.feedback["msg"])
         st.session_state.feedback = None 
 
-    # 2. State Key Fix
-    if st.session_state.q_data.get("Zero Gravity") is None:
-        mags = {"Thousand": 3, "Million": 6, "Billion": 9}
-        op = random.choice(["Multiply", "Divide"])
+    # 2. State Key Fix & Dictionary Upgrade
+    current_q = st.session_state.q_data.get("Zero Gravity")
+    if current_q is None or not isinstance(current_q, dict):
+        mags = {"": 0, "Thousand": 3, "Million": 6, "Billion": 9}
         
-        if op == "Divide":
-            mantissa_ans = random.choice([0.5, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0])
-            n2 = random.randint(2, 9)
-            n1 = mantissa_ans * n2
-            mag1, mag2 = random.sample(list(mags.items()), 2)
-            if mag1[1] < mag2[1]: mag1, mag2 = mag2, mag1 
-            correct_val = (n1 * (10**mag1[1])) / (n2 * (10**mag2[1]))
-        else:
-            n1 = random.randint(2, 15)
-            n2 = random.randint(2, 15)
-            mag1, mag2 = random.sample(list(mags.items()), 2)
-            correct_val = (n1 * (10**mag1[1])) * (n2 * (10**mag2[1]))
+        # 30% chance to generate a 2-step chained question
+        steps = random.choices([1, 2], weights=[0.7, 0.3])[0]
+        
+        if steps == 1:
+            op = random.choice(["Add", "Subtract", "Multiply", "Divide"])
             
-        st.session_state.q_data["Zero Gravity"] = (n1, mag1, op, n2, mag2, correct_val)
+            if op == "Divide":
+                mantissa_ans = random.choice([0.5, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 10.0, 20.0])
+                n2_base = random.randint(2, 12)
+                n2_mult = random.choice([1, 10, 100])
+                n2 = n2_base * n2_mult
+                n1 = mantissa_ans * n2
+                
+                mag1_name, mag1_val = random.choice(list(mags.items()))
+                mag2_name, mag2_val = random.choice(list(mags.items()))
+                if mag1_val < mag2_val: 
+                    mag1_name, mag1_val, mag2_name, mag2_val = mag2_name, mag2_val, mag1_name, mag1_val
+                
+                val1 = n1 * (10**mag1_val)
+                val2 = n2 * (10**mag2_val)
+                correct_val = val1 / val2
+                
+            elif op == "Multiply":
+                n1 = random.randint(2, 15) * random.choice([1, 10, 100])
+                n2 = random.randint(2, 15) * random.choice([1, 10, 100])
+                mag1_name, mag1_val = random.choice(list(mags.items()))
+                mag2_name, mag2_val = random.choice(list(mags.items()))
+                
+                while mag1_val + mag2_val > 12:
+                    mag1_name, mag1_val = random.choice(list(mags.items()))
+                    mag2_name, mag2_val = random.choice(list(mags.items()))
+                    
+                val1 = n1 * (10**mag1_val)
+                val2 = n2 * (10**mag2_val)
+                correct_val = val1 * val2
 
-    n1, mag1, op, n2, mag2, correct_val = st.session_state.q_data["Zero Gravity"]
-    st.subheader(f"{n1} {mag1[0]} {op.lower()} by {n2} {mag2[0]}")
+            else: # Add or Subtract
+                n1 = random.randint(2, 99) * random.choice([1, 10, 100])
+                n2 = random.randint(2, 99) * random.choice([1, 10, 100])
+                mag1_name, mag1_val = random.choice(list(mags.items()))
+                mag2_name, mag2_val = random.choice(list(mags.items()))
+                
+                val1 = n1 * (10**mag1_val)
+                val2 = n2 * (10**mag2_val)
+                
+                if op == "Subtract" and val2 > val1:
+                    val1, val2 = val2, val1
+                    n1, n2 = n2, n1
+                    mag1_name, mag2_name = mag2_name, mag1_name
+                    mag1_val, mag2_val = mag2_val, mag1_val
+                    
+                correct_val = val1 + val2 if op == "Add" else val1 - val2
+
+            st.session_state.q_data["Zero Gravity"] = {
+                "steps": 1,
+                "op1": op,
+                "n1": n1, "mag1_name": mag1_name, "mag1_val": mag1_val, "val1": val1,
+                "n2": n2, "mag2_name": mag2_name, "mag2_val": mag2_val, "val2": val2,
+                "correct_val": correct_val
+            }
+            
+        else: # 2-Step Logic
+            op1 = random.choice(["Multiply", "Divide"])
+            op2 = "Divide" if op1 == "Multiply" else "Multiply"
+            
+            # Generate backwards to ensure clean math
+            factor1 = random.randint(2, 12)
+            factor2 = random.randint(2, 12)
+            factor3 = random.randint(2, 12)
+            
+            if op1 == "Multiply": # A * B / C
+                n3 = factor1
+                n1 = n3 * factor2
+                n2 = factor3
+            else: # A / B * C
+                n2 = factor1
+                n1 = n2 * factor2
+                n3 = factor3
+                
+            n1 *= random.choice([1, 10, 10])
+            n2 *= random.choice([1, 10, 10])
+            n3 *= random.choice([1, 10, 10])
+            
+            mag1_name, mag1_val = random.choice(list(mags.items()))
+            mag2_name, mag2_val = random.choice(list(mags.items()))
+            mag3_name, mag3_val = random.choice(list(mags.items()))
+            
+            # Prevent microscopic decimals by enforcing magnitude hierarchies
+            if op1 == "Multiply":
+                while mag1_val + mag2_val < mag3_val:
+                    mag3_name, mag3_val = random.choice(list(mags.items()))
+            else:
+                while mag1_val + mag3_val < mag2_val:
+                    mag2_name, mag2_val = random.choice(list(mags.items()))
+                    
+            val1 = n1 * (10**mag1_val)
+            val2 = n2 * (10**mag2_val)
+            val3 = n3 * (10**mag3_val)
+            
+            if op1 == "Multiply":
+                correct_val = (val1 * val2) / val3
+            else:
+                correct_val = (val1 / val2) * val3
+                
+            st.session_state.q_data["Zero Gravity"] = {
+                "steps": 2,
+                "op1": op1, "op2": op2,
+                "n1": n1, "mag1_name": mag1_name, "mag1_val": mag1_val, "val1": val1,
+                "n2": n2, "mag2_name": mag2_name, "mag2_val": mag2_val, "val2": val2,
+                "n3": n3, "mag3_name": mag3_name, "mag3_val": mag3_val, "val3": val3,
+                "correct_val": correct_val
+            }
+
+    # Unpack the current question
+    q = st.session_state.q_data["Zero Gravity"]
+    
+    op_text_map = {"Add": "plus", "Subtract": "minus", "Multiply": "multiplied by", "Divide": "divided by"}
+    
+    # Format the terms cleanly (removes trailing spaces if magnitude is blank)
+    term1 = f"{q['n1']:g} {q['mag1_name']}".strip()
+    term2 = f"{q['n2']:g} {q['mag2_name']}".strip()
+    
+    if q["steps"] == 1:
+        op_str = op_text_map[q["op1"]]
+        st.subheader(f"{term1} {op_str} {term2}")
+    else:
+        term3 = f"{q['n3']:g} {q['mag3_name']}".strip()
+        op1_str = op_text_map[q["op1"]]
+        op2_str = op_text_map[q["op2"]]
+        st.subheader(f"{term1} {op1_str} {term2} {op2_str} {term3}")
     
     with st.form("t3_form", clear_on_submit=True):
-        # 3. Text Input Fix
         user_input = st.text_input("Raw Number Answer (e.g., 500000):")
 
         autofocus_active_input()
@@ -286,14 +472,25 @@ with tab3:
             if user_input.strip() != "":
                 try:
                     user_ans = float(user_input)
-                    is_correct = math.isclose(user_ans, correct_val, rel_tol=1e-5)
+                    is_correct = math.isclose(user_ans, q["correct_val"], rel_tol=1e-5)
                     process_answer("Zero Gravity", is_correct)
                     
-                    # Append the breakdown to the feedback message so it survives the reload
-                    if op == "Divide":
-                        breakdown = f"\n\n**Breakdown:** Mantissa: {n1} / {n2} = {n1/n2}. Zeros: 10^{mag1[1]} / 10^{mag2[1]} = 10^{mag1[1]-mag2[1]}."
-                        st.session_state.feedback["msg"] += breakdown
+                    # Custom breakdown based on 1-step vs 2-step
+                    if q["steps"] == 1:
+                        if q["op1"] == "Divide":
+                            breakdown = f"\n\n**Breakdown:** Mantissa: {q['n1']:g} / {q['n2']:g} = {q['n1']/q['n2']:g}. Zeros: 10^{q['mag1_val']} / 10^{q['mag2_val']} = 10^{q['mag1_val']-q['mag2_val']}."
+                        elif q["op1"] in ["Add", "Subtract"]:
+                            symbol = "+" if q["op1"] == "Add" else "-"
+                            breakdown = f"\n\n**Expanded:** {q['val1']:,.0f} {symbol} {q['val2']:,.0f} = {q['correct_val']:,.0f}"
+                        else:
+                            breakdown = f"\n\n**Exact Answer:** {q['correct_val']:,.0f}"
+                    else:
+                        symbol1 = "*" if q["op1"] == "Multiply" else "/"
+                        symbol2 = "*" if q["op2"] == "Multiply" else "/"
+                        breakdown = f"\n\n**Expanded:** ({q['val1']:,.0f} {symbol1} {q['val2']:,.0f}) {symbol2} {q['val3']:,.0f} = {q['correct_val']:,.0f}"
                         
+                    st.session_state.feedback["msg"] += breakdown
+                    
                     st.rerun()
                 except ValueError:
                     st.error("Please enter a valid number.")
@@ -312,19 +509,36 @@ with tab4:
             st.error(st.session_state.feedback["msg"])
         st.session_state.feedback = None 
 
-    # 2. State Key Fix
-    if st.session_state.q_data.get("Fraction Bounding") is None:
-        num = random.randint(15, 95)
-        den = random.randint(110, 850)
-        actual_pct = (num / den) * 100
-        st.session_state.q_data["Fraction Bounding"] = (num, den, actual_pct)
+    # 2. State Key Fix & Dictionary Upgrade
+    current_q = st.session_state.q_data.get("Fraction Bounding")
+    if current_q is None or not isinstance(current_q, dict):
+        q_type = random.choice(["fraction", "pct_of_base"])
+        q_data = {"type": q_type}
+        
+        if q_type == "fraction":
+            q_data["num"] = random.randint(15, 95)
+            q_data["den"] = random.randint(110, 850)
+            q_data["actual_ans"] = (q_data["num"] / q_data["den"]) * 100
+        else:
+            q_data["pct"] = random.randint(15, 95)
+            q_data["base"] = random.randint(1100, 9900)
+            q_data["actual_ans"] = (q_data["pct"] / 100.0) * q_data["base"]
+            
+        st.session_state.q_data["Fraction Bounding"] = q_data
 
-    num, den, actual_pct = st.session_state.q_data["Fraction Bounding"]
-    st.subheader(f"Estimate: {num} / {den} as a percentage")
+    # Unpack the current question
+    q = st.session_state.q_data["Fraction Bounding"]
+    
+    # Set UI based on question type
+    if q["type"] == "fraction":
+        st.subheader(f"Estimate: {q['num']} / {q['den']} as a percentage")
+        input_label = "Your Estimate (%):"
+    else:
+        st.subheader(f"Estimate: {q['pct']}% of {q['base']}")
+        input_label = "Your Estimate (Absolute Value):"
     
     with st.form("t4_form", clear_on_submit=True):
-        # 3. Text Input Fix
-        user_input = st.text_input("Your Estimate (%):")
+        user_input = st.text_input(input_label)
 
         autofocus_active_input()
         
@@ -332,17 +546,30 @@ with tab4:
             if user_input.strip() != "":
                 try:
                     user_guess = float(user_input)
-                    variance = abs(user_guess - actual_pct)
-                    is_correct = variance <= 1.0 # Pass if within 1%
+                    
+                    if q["type"] == "fraction":
+                        variance = abs(user_guess - q["actual_ans"])
+                        is_correct = variance <= 1.0 # Pass if within 1% absolute
+                        actual_text = f"{q['actual_ans']:.2f}%"
+                        var_text = f"{variance:.2f}%"
+                        base_val = q["den"]
+                    else:
+                        variance = abs(user_guess - q["actual_ans"])
+                        allowed_variance = q["base"] * 0.01 # Pass if within 1% of the base
+                        is_correct = variance <= allowed_variance
+                        actual_text = f"{q['actual_ans']:.1f}"
+                        var_text = f"{variance:.1f} (Allowed: ±{allowed_variance:.1f})"
+                        base_val = q["base"]
+
                     process_answer("Fraction Bounding", is_correct)
                     
                     # Append the bounding blocks to the feedback message
                     building_blocks = (
-                        f"\n\n**Actual:** {actual_pct:.2f}% (Variance: {variance:.2f}%)\n"
-                        f"**Building Blocks of {den}:**\n"
-                        f"- 10% = {den * 0.1:.1f}\n"
-                        f"- 5% = {den * 0.05:.1f}\n"
-                        f"- 1% = {den * 0.01:.1f}"
+                        f"\n\n**Actual:** {actual_text} (Variance: {var_text})\n"
+                        f"**Building Blocks of {base_val}:**\n"
+                        f"- 10% = {base_val * 0.1:.1f}\n"
+                        f"- 5% = {base_val * 0.05:.1f}\n"
+                        f"- 1% = {base_val * 0.01:.1f}"
                     )
                     st.session_state.feedback["msg"] += building_blocks
                     
@@ -494,8 +721,423 @@ with tab5:
             else:
                 st.error("Please enter an answer before submitting.")
 
-# --- TAB 6: Performance Dashboard ---
+# --- TAB 6: Trading Intuition Drills ---
 with tab6:
+    st.header("Trading Intuition Drills")
+    st.caption("Speed drills for basis, futures curves, and options — sized for dairy/milk futures ranges.")
+
+    module = st.radio(
+        "Choose a module:",
+        ["Basis & Futures Curve", "Milk Price Arithmetic", "Options Breakeven", "Payoff Diagram Explorer"],
+        horizontal=True,
+        key="trading_module_choice"
+    )
+
+    st.divider()
+
+    # ===================== MODULE 1: BASIS & FUTURES CURVE =====================
+    if module == "Basis & Futures Curve":
+        drill = st.radio(
+            "Drill type:",
+            ["Basis Calculation", "Basis Direction (Strengthen/Weaken)", "Curve Shape (Contango/Backwardation)"],
+            key="basis_drill_choice"
+        )
+
+        if drill == "Basis Calculation":
+            tab_name = "Basis Calc"
+            if st.session_state.feedback and st.session_state.feedback.get("tab") == tab_name:
+                if st.session_state.feedback["type"] == "success":
+                    st.success(st.session_state.feedback["msg"])
+                else:
+                    st.error(st.session_state.feedback["msg"])
+                st.session_state.feedback = None
+
+            if st.session_state.q_data.get(tab_name) is None:
+                spot = random.randint(30, 48) * 100
+                basis = random.choice([x for x in range(-300, 301, 10) if x != 0])
+                futures = spot - basis
+                st.session_state.q_data[tab_name] = {"spot": spot, "futures": futures, "basis": basis}
+
+            q = st.session_state.q_data[tab_name]
+            st.subheader(f"Spot: ${q['spot']:,}  |  Futures: ${q['futures']:,}")
+            st.write("What is the basis? (Spot − Futures, include the sign)")
+
+            with st.form("basis_calc_form", clear_on_submit=True):
+                user_input = st.text_input("Basis:", key="basis_calc_input")
+                autofocus_active_input()
+                if st.form_submit_button("Submit", key="basis_calc_submit"):
+                    if user_input.strip() != "":
+                        try:
+                            user_ans = float(user_input)
+                            is_correct = math.isclose(user_ans, q["basis"], abs_tol=0.5)
+                            process_answer(tab_name, is_correct)
+                            shape = "Contango" if q["futures"] > q["spot"] else "Backwardation"
+                            breakdown = (
+                                f"\n\n**Basis = Spot − Futures = {q['spot']:,} − {q['futures']:,} = {fmt_signed(q['basis'])}**\n"
+                                f"Futures {'>' if q['futures'] > q['spot'] else '<'} Spot → market is in **{shape}**."
+                            )
+                            st.session_state.feedback["msg"] += breakdown
+                            st.rerun()
+                        except ValueError:
+                            st.error("Please enter a valid number.")
+                    else:
+                        st.error("Please enter an answer before submitting.")
+
+        elif drill == "Basis Direction (Strengthen/Weaken)":
+            tab_name = "Basis Direction"
+            if st.session_state.feedback and st.session_state.feedback.get("tab") == tab_name:
+                if st.session_state.feedback["type"] == "success":
+                    st.success(st.session_state.feedback["msg"])
+                else:
+                    st.error(st.session_state.feedback["msg"])
+                st.session_state.feedback = None
+
+            if st.session_state.q_data.get(tab_name) is None:
+                basis_old = random.choice([x for x in range(-300, 301, 10) if x != 0])
+                delta = random.choice([x for x in range(-150, 151, 10) if x != 0])
+                basis_new = basis_old + delta
+                direction = "strengthen" if basis_new > basis_old else "weaken"
+                st.session_state.q_data[tab_name] = {"basis_old": basis_old, "basis_new": basis_new, "direction": direction}
+
+            q = st.session_state.q_data[tab_name]
+            st.subheader(f"Basis 3 months ago: {fmt_signed(q['basis_old'])}   →   Basis today: {fmt_signed(q['basis_new'])}")
+            st.write("Did the basis **strengthen** or **weaken**?")
+
+            with st.form("basis_dir_form", clear_on_submit=True):
+                user_input = st.text_input("Strengthen or Weaken:", key="basis_dir_input")
+                autofocus_active_input()
+                if st.form_submit_button("Submit", key="basis_dir_submit"):
+                    if user_input.strip() == "":
+                        st.error("Please enter an answer before submitting.")
+                    else:
+                        guess = normalize_direction(user_input)
+                        if guess is None:
+                            st.error("Please type 'strengthen' or 'weaken'.")
+                        else:
+                            is_correct = (guess == q["direction"])
+                            process_answer(tab_name, is_correct)
+                            beneficiary = "sellers / short hedgers (long the basis)" if q["direction"] == "strengthen" else "buyers / long hedgers (short the basis)"
+                            breakdown = (
+                                f"\n\n**Basis moved from {fmt_signed(q['basis_old'])} to {fmt_signed(q['basis_new'])} → it {q['direction'].upper()}ED.**\n"
+                                f"This benefits: {beneficiary}."
+                            )
+                            st.session_state.feedback["msg"] += breakdown
+                            st.rerun()
+
+        else:  # Curve Shape
+            tab_name = "Curve Shape"
+            if st.session_state.feedback and st.session_state.feedback.get("tab") == tab_name:
+                if st.session_state.feedback["type"] == "success":
+                    st.success(st.session_state.feedback["msg"])
+                else:
+                    st.error(st.session_state.feedback["msg"])
+                st.session_state.feedback = None
+
+            if st.session_state.q_data.get(tab_name) is None:
+                shape = random.choice(["contango", "backwardation"])
+                start = random.randint(3000, 4500)
+                prices = [start]
+                for _ in range(3):
+                    step = random.randint(10, 40)
+                    if shape == "backwardation":
+                        step = -step
+                    prices.append(prices[-1] + step)
+                st.session_state.q_data[tab_name] = {"shape": shape, "prices": prices}
+
+            q = st.session_state.q_data[tab_name]
+            months = ["Front Month", "+1 Month", "+2 Month", "+3 Month"]
+            curve_df = pd.DataFrame({"Price": q["prices"]}, index=months)
+            st.subheader("Futures Curve")
+            st.line_chart(curve_df)
+            cols = st.columns(4)
+            for c, m, p in zip(cols, months, q["prices"]):
+                c.metric(m, f"${p:,}")
+            st.write("Is this curve in **contango** or **backwardation**?")
+
+            with st.form("curve_shape_form", clear_on_submit=True):
+                user_input = st.text_input("Contango or Backwardation:", key="curve_shape_input")
+                autofocus_active_input()
+                if st.form_submit_button("Submit", key="curve_shape_submit"):
+                    if user_input.strip() == "":
+                        st.error("Please enter an answer before submitting.")
+                    else:
+                        guess = normalize_curve_shape(user_input)
+                        if guess is None:
+                            st.error("Please type 'contango' or 'backwardation'.")
+                        else:
+                            is_correct = (guess == q["shape"])
+                            process_answer(tab_name, is_correct)
+                            breakdown = (
+                                f"\n\n**Prices {'rise' if q['shape']=='contango' else 'fall'} across the curve → {q['shape'].capitalize()}.**\n"
+                                f"Contango = futures > spot / rising with maturity (normal carry market). "
+                                f"Backwardation = futures < spot / falling with maturity (tight/scarce supply)."
+                            )
+                            st.session_state.feedback["msg"] += breakdown
+                            st.rerun()
+
+    # ===================== MODULE 2: MILK PRICE ARITHMETIC =====================
+    elif module == "Milk Price Arithmetic":
+        tab_name = "Milk Arithmetic"
+        if st.session_state.feedback and st.session_state.feedback.get("tab") == tab_name:
+            if st.session_state.feedback["type"] == "success":
+                st.success(st.session_state.feedback["msg"])
+            else:
+                st.error(st.session_state.feedback["msg"])
+            st.session_state.feedback = None
+
+        current_q = st.session_state.q_data.get(tab_name)
+        if current_q is None or not isinstance(current_q, dict):
+            q_type = random.choice(["calc_basis", "calc_effective_price", "basis_direction", "hedge_pnl"])
+            q_data = {"type": q_type}
+
+            if q_type == "calc_basis":
+                q_data["spot"] = random.randint(30, 48) * 100
+                q_data["basis"] = random.choice([x for x in range(-300, 301, 10) if x != 0])
+                q_data["futures"] = q_data["spot"] - q_data["basis"]
+                q_data["answer"] = q_data["basis"]
+
+            elif q_type == "calc_effective_price":
+                q_data["futures_sold"] = random.randint(30, 48) * 100
+                q_data["basis"] = random.choice([x for x in range(-300, 301, 10) if x != 0])
+                q_data["answer"] = q_data["futures_sold"] + q_data["basis"]
+
+            elif q_type == "basis_direction":
+                q_data["basis_old"] = random.choice([x for x in range(-300, 301, 10) if x != 0])
+                delta = random.choice([x for x in range(-150, 151, 10) if x != 0])
+                q_data["basis_new"] = q_data["basis_old"] + delta
+                q_data["direction"] = "strengthen" if q_data["basis_new"] > q_data["basis_old"] else "weaken"
+
+            else:  # hedge_pnl
+                q_data["volume"] = random.choice([100, 200, 250, 500, 1000, 1500, 2000])
+                q_data["entry_price"] = random.randint(38, 46) * 100
+                move = random.choice([x for x in range(-500, 501, 25) if x != 0])
+                q_data["settlement"] = q_data["entry_price"] + move
+                q_data["answer"] = q_data["entry_price"] - q_data["settlement"]
+
+            st.session_state.q_data[tab_name] = q_data
+
+        q = st.session_state.q_data[tab_name]
+
+        if q["type"] == "calc_basis":
+            st.subheader(f"Spot is ${q['spot']:,}. You sold futures at ${q['futures']:,}.")
+            input_label = "What is your basis?"
+        elif q["type"] == "calc_effective_price":
+            st.subheader(f"You sold futures at ${q['futures_sold']:,}. Basis is {fmt_signed(q['basis'])}.")
+            input_label = "What is your effective price?"
+        elif q["type"] == "basis_direction":
+            st.subheader(f"Basis was {fmt_signed(q['basis_old'])}. Now it's {fmt_signed(q['basis_new'])}.")
+            input_label = "Did basis strengthen or weaken?"
+        else:
+            st.subheader(f"You hedge {q['volume']:,} MT by selling futures at ${q['entry_price']:,}. At settlement, spot/futures is ${q['settlement']:,}.")
+            input_label = "Futures P&L per MT? (use a negative sign for a loss)"
+
+        with st.form("milk_arith_form", clear_on_submit=True):
+            user_input = st.text_input(input_label, key="milk_arith_input")
+            autofocus_active_input()
+            if st.form_submit_button("Submit", key="milk_arith_submit"):
+                if user_input.strip() == "":
+                    st.error("Please enter an answer before submitting.")
+                elif q["type"] == "basis_direction":
+                    guess = normalize_direction(user_input)
+                    if guess is None:
+                        st.error("Please type 'strengthen' or 'weaken'.")
+                    else:
+                        is_correct = (guess == q["direction"])
+                        process_answer(tab_name, is_correct)
+                        beneficiary = "sellers / short hedgers" if q["direction"] == "strengthen" else "buyers / long hedgers"
+                        st.session_state.feedback["msg"] += f"\n\n**Basis {q['direction']}ed. This benefits: {beneficiary}.**"
+                        st.rerun()
+                else:
+                    try:
+                        user_ans = float(user_input)
+                        is_correct = math.isclose(user_ans, q["answer"], abs_tol=0.5)
+                        process_answer(tab_name, is_correct)
+
+                        if q["type"] == "calc_basis":
+                            breakdown = f"\n\n**Basis = Spot − Futures = {q['spot']:,} − {q['futures']:,} = {fmt_signed(q['answer'])}**"
+                        elif q["type"] == "calc_effective_price":
+                            breakdown = f"\n\n**Effective Price = Futures + Basis = {q['futures_sold']:,} + {fmt_signed(q['basis'])} = {q['answer']:,.0f}**"
+                        else:
+                            total_pnl = q["answer"] * q["volume"]
+                            net_effective = q["settlement"] + q["answer"]
+                            breakdown = (
+                                f"\n\n**Futures P&L/MT = Entry − Settlement = {q['entry_price']:,} − {q['settlement']:,} = {fmt_signed(q['answer'])}**\n"
+                                f"Total P&L = {fmt_signed(q['answer'])} × {q['volume']:,} MT = ${total_pnl:+,.0f}\n"
+                                f"Net Effective Price = Settlement + P&L/MT = {q['settlement']:,} + ({fmt_signed(q['answer'])}) = ${net_effective:,.0f} "
+                                f"— the hedge locks in your entry price regardless of where spot ends up."
+                            )
+                        st.session_state.feedback["msg"] += breakdown
+                        st.rerun()
+                    except ValueError:
+                        st.error("Please enter a valid number.")
+
+    # ===================== MODULE 3: OPTIONS BREAKEVEN =====================
+    elif module == "Options Breakeven":
+        tab_name = "Options Breakeven"
+        if st.session_state.feedback and st.session_state.feedback.get("tab") == tab_name:
+            if st.session_state.feedback["type"] == "success":
+                st.success(st.session_state.feedback["msg"])
+            else:
+                st.error(st.session_state.feedback["msg"])
+            st.session_state.feedback = None
+
+        current_q = st.session_state.q_data.get(tab_name)
+        if current_q is None or not isinstance(current_q, dict):
+            q_type = random.choice(["call_breakeven", "put_breakeven", "moneyness", "intrinsic_value", "net_effective_price"])
+            q_data = {"type": q_type}
+
+            if q_type in ("call_breakeven", "put_breakeven"):
+                q_data["strike"] = random.randint(35, 48) * 100
+                q_data["premium"] = random.randint(50, 200)
+                if q_type == "call_breakeven":
+                    q_data["answer"] = q_data["strike"] + q_data["premium"]
+                else:
+                    q_data["answer"] = q_data["strike"] - q_data["premium"]
+
+            elif q_type in ("moneyness", "intrinsic_value"):
+                q_data["opt_type"] = random.choice(["call", "put"])
+                q_data["strike"] = random.randint(35, 48) * 100
+                q_data["spot_exp"] = q_data["strike"] + random.choice(list(range(-300, 301, 10)))
+                if q_data["opt_type"] == "call":
+                    q_data["intrinsic"] = max(q_data["spot_exp"] - q_data["strike"], 0)
+                else:
+                    q_data["intrinsic"] = max(q_data["strike"] - q_data["spot_exp"], 0)
+                if q_data["spot_exp"] == q_data["strike"]:
+                    q_data["moneyness"] = "atm"
+                elif q_data["intrinsic"] > 0:
+                    q_data["moneyness"] = "itm"
+                else:
+                    q_data["moneyness"] = "otm"
+
+            else:  # net_effective_price (protective put)
+                q_data["strike"] = random.randint(35, 48) * 100
+                q_data["premium"] = random.randint(50, 200)
+                q_data["spot_exp"] = random.randint(30, 50) * 100
+                q_data["answer"] = max(q_data["strike"], q_data["spot_exp"]) - q_data["premium"]
+
+            st.session_state.q_data[tab_name] = q_data
+
+        q = st.session_state.q_data[tab_name]
+
+        if q["type"] == "call_breakeven":
+            st.subheader(f"Call Option — Strike: ${q['strike']:,}, Premium: ${q['premium']:,}")
+            input_label = "Breakeven price at expiry?"
+        elif q["type"] == "put_breakeven":
+            st.subheader(f"Put Option — Strike: ${q['strike']:,}, Premium: ${q['premium']:,}")
+            input_label = "Breakeven price at expiry?"
+        elif q["type"] == "moneyness":
+            st.subheader(f"{q['strike']:,} {q['opt_type'].upper()} option. At expiry, spot is ${q['spot_exp']:,}.")
+            input_label = "ITM, OTM, or ATM?"
+        elif q["type"] == "intrinsic_value":
+            st.subheader(f"{q['strike']:,} {q['opt_type'].upper()} option. At expiry, spot is ${q['spot_exp']:,}.")
+            input_label = "What is the intrinsic value?"
+        else:
+            st.subheader(f"You bought a {q['strike']:,} put for ${q['premium']:,} to protect a milk sale. At expiry, spot is ${q['spot_exp']:,}.")
+            input_label = "What is your net effective price?"
+
+        with st.form("options_be_form", clear_on_submit=True):
+            user_input = st.text_input(input_label, key="options_be_input")
+            autofocus_active_input()
+            if st.form_submit_button("Submit", key="options_be_submit"):
+                if user_input.strip() == "":
+                    st.error("Please enter an answer before submitting.")
+                elif q["type"] == "moneyness":
+                    guess = normalize_moneyness(user_input)
+                    if guess is None:
+                        st.error("Please type ITM, OTM, or ATM.")
+                    else:
+                        is_correct = (guess == q["moneyness"])
+                        process_answer(tab_name, is_correct)
+                        st.session_state.feedback["msg"] += f"\n\n**Intrinsic Value = ${q['intrinsic']:,} → {q['moneyness'].upper()}.**"
+                        st.rerun()
+                else:
+                    try:
+                        user_ans = float(user_input)
+                        target = q["intrinsic"] if q["type"] == "intrinsic_value" else q["answer"]
+                        is_correct = math.isclose(user_ans, target, abs_tol=0.5)
+                        process_answer(tab_name, is_correct)
+
+                        if q["type"] == "call_breakeven":
+                            breakdown = f"\n\n**Breakeven = Strike + Premium = {q['strike']:,} + {q['premium']:,} = {q['answer']:,}**"
+                        elif q["type"] == "put_breakeven":
+                            breakdown = f"\n\n**Breakeven = Strike − Premium = {q['strike']:,} − {q['premium']:,} = {q['answer']:,}**"
+                        elif q["type"] == "intrinsic_value":
+                            breakdown = f"\n\n**Intrinsic Value = ${q['intrinsic']:,} → {q['moneyness'].upper()}.**"
+                        else:
+                            side = "strike (exercised the put)" if q['spot_exp'] < q['strike'] else "spot (let the put expire)"
+                            breakdown = (
+                                f"\n\n**Net Effective Price = max(Strike, Spot) − Premium = "
+                                f"max({q['strike']:,}, {q['spot_exp']:,}) − {q['premium']:,} = {q['answer']:,}**\n"
+                                f"You effectively sold at {side}."
+                            )
+                        st.session_state.feedback["msg"] += breakdown
+                        st.rerun()
+                    except ValueError:
+                        st.error("Please enter a valid number.")
+
+    # ===================== PAYOFF DIAGRAM EXPLORER (not scored) =====================
+    else:
+        st.subheader("Options Payoff Explorer")
+        st.caption("Not scored — drag the slider to build intuition for how P&L moves with spot.")
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            opt_type = st.selectbox("Option Type", ["Call", "Put"], key="pd_opt_type")
+        with c2:
+            position = st.selectbox("Position", ["Long", "Short"], key="pd_position")
+        with c3:
+            strike = st.number_input("Strike ($)", value=4200, step=50, key="pd_strike")
+        with c4:
+            premium = st.number_input("Premium ($/MT)", value=120, step=10, key="pd_premium")
+
+        spot_lo = int(strike - 600)
+        spot_hi = int(strike + 600)
+        spot = st.slider("Spot Price at Expiry ($)", min_value=spot_lo, max_value=spot_hi, value=int(strike), step=10, key="pd_spot")
+
+        spots = np.linspace(spot_lo, spot_hi, 200)
+        if opt_type == "Call":
+            intrinsic_curve = np.maximum(spots - strike, 0)
+            current_intrinsic = max(spot - strike, 0)
+        else:
+            intrinsic_curve = np.maximum(strike - spots, 0)
+            current_intrinsic = max(strike - spot, 0)
+
+        if position == "Long":
+            payoff_curve = intrinsic_curve - premium
+            current_payoff = current_intrinsic - premium
+        else:
+            payoff_curve = premium - intrinsic_curve
+            current_payoff = premium - current_intrinsic
+
+        breakeven = strike + premium if opt_type == "Call" else strike - premium
+
+        if MATPLOTLIB_AVAILABLE:
+            fig, ax = plt.subplots(figsize=(8, 4))
+            ax.plot(spots, payoff_curve, color="#1f77b4", linewidth=2)
+            ax.axhline(0, color="gray", linewidth=1, linestyle="--")
+            ax.axvline(strike, color="orange", linewidth=1, linestyle=":", label=f"Strike ${strike:,.0f}")
+            ax.fill_between(spots, payoff_curve, 0, where=(payoff_curve >= 0), color="green", alpha=0.15)
+            ax.fill_between(spots, payoff_curve, 0, where=(payoff_curve < 0), color="red", alpha=0.15)
+            ax.scatter([spot], [current_payoff], color="black", zorder=5)
+            ax.annotate(f"P&L: {current_payoff:+,.0f}/MT", (spot, current_payoff),
+                        textcoords="offset points", xytext=(10, 10))
+            ax.set_xlabel("Spot Price at Expiry ($)")
+            ax.set_ylabel("P&L per MT ($)")
+            ax.set_title(f"{position} {strike:,.0f} {opt_type} @ ${premium:,.0f} premium")
+            ax.legend(loc="upper left")
+            st.pyplot(fig)
+            plt.close(fig)
+        else:
+            st.warning("Install matplotlib for the visual payoff diagram: `pip install matplotlib`. Showing raw data instead.")
+            st.line_chart(pd.DataFrame({"P&L": payoff_curve}, index=spots))
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Current P&L / MT", f"${current_payoff:+,.0f}")
+        m2.metric("Current P&L (25 MT contract)", f"${current_payoff * 25:+,.0f}")
+        m3.metric("Breakeven", f"${breakeven:,.0f}")
+
+# --- TAB 7: Performance Dashboard ---
+with tab7:
     st.header("Performance Dashboard")
     try:
         conn = sqlite3.connect(DB_NAME)

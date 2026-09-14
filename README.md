@@ -21,7 +21,11 @@ cd YOUR_REPO_NAME
 ```
 
 ### 2. Install Dependencies
-It is highly recommended to use a virtual environment. Once inside the project folder, install the required packages using `pip`. The primary dependencies are Streamlit and Pandas.
+It is highly recommended to use a virtual environment. Once inside the project folder, install the required packages:
+```bash
+pip install -r requirements.txt
+```
+The primary dependencies are Streamlit and Pandas. Matplotlib is used for the payoff diagram in the Trading Drills tab — if it isn't installed, that one chart falls back to a simpler view and the rest of the app is unaffected.
 
 
 ### 3. Run the Engine
@@ -59,7 +63,14 @@ This is the ultimate context-switching drill. It randomly generates five of the 
 4. **Breakeven Volume:** Calculating exact units required to cover fixed costs.
 5. **Compounding Growth:** Calculating Year 2 revenues based on a starting base and YoY growth rate.
 
-### Tab 6: Performance Dashboard
+### Tab 6: Trading Drills
+Built for trading intuition rather than case interviews, sized to dairy/milk futures price ranges. Pick a module from the radio selector:
+- **Basis & Futures Curve** — three drills: compute the exact (signed) basis from a spot/futures pair, judge whether a basis move over time is strengthening or weakening, and read a 4-point futures curve to call contango vs. backwardation.
+- **Milk Price Arithmetic** — mixed-format speed drill that randomly asks you to compute basis, solve for effective price from futures + basis, judge basis direction, or work a full hedge P&L (futures P&L per MT, total P&L, and net effective price).
+- **Options Breakeven** — mixed-format drill covering call/put breakeven, ITM/OTM/ATM judgment with intrinsic value, and net effective price for a protective put.
+- **Payoff Diagram Explorer** — not scored. Pick option type, position (long/short), strike, and premium, then drag a spot-price slider to watch the P&L payoff diagram update live — built for memorizing the shape of each payoff curve.
+
+### Tab 7: Performance Dashboard
 If you can maintain 120 WPM on a keyboard, you can train your Calculations Per Minute (CPM) just as rigorously. This dashboard reads your local SQLite database to display your overall accuracy, CPM, and a rolling 10-question moving average chart (filterable by module) to track your progression over time.
 
 ---
