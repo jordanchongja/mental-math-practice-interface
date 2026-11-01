@@ -1,5 +1,4 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
 import numpy as np
 import random
@@ -17,32 +16,7 @@ except ImportError:
     MATPLOTLIB_AVAILABLE = False
 
 # --- Database & State Initialization ---
-DB_NAME = "math_stats.db"
-
-def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS logs
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                  tab_name TEXT,
-                  is_correct INTEGER,
-                  time_sec REAL,
-                  xp_earned INTEGER)''')
-    conn.commit()
-    conn.close()
-
-def log_performance(tab_name, is_correct, time_sec, xp_earned):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("INSERT INTO logs (tab_name, is_correct, time_sec, xp_earned) VALUES (?, ?, ?, ?)",
-              (tab_name, int(is_correct), time_sec, xp_earned))
-    conn.commit()
-    
-    # Export to CSV automatically
-    df = pd.read_sql_query("SELECT * FROM logs", conn)
-    df.to_csv("performance_log.csv", index=False)
-    conn.close()
+from storage import init_db, log_performance, read_logs
 
 if 'initialized' not in st.session_state:
     init_db()
@@ -1140,9 +1114,7 @@ with tab6:
 with tab7:
     st.header("Performance Dashboard")
     try:
-        conn = sqlite3.connect(DB_NAME)
-        df = pd.read_sql_query("SELECT * FROM logs", conn)
-        conn.close()
+        df = read_logs()
         
         if not df.empty:
             df['timestamp'] = pd.to_datetime(df['timestamp'])

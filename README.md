@@ -71,7 +71,21 @@ Built for trading intuition rather than case interviews, sized to dairy/milk fut
 - **Payoff Diagram Explorer** — not scored. Pick option type, position (long/short), strike, and premium, then drag a spot-price slider to watch the P&L payoff diagram update live — built for memorizing the shape of each payoff curve.
 
 ### Tab 7: Performance Dashboard
-If you can maintain 120 WPM on a keyboard, you can train your Calculations Per Minute (CPM) just as rigorously. This dashboard reads your local SQLite database to display your overall accuracy, CPM, and a rolling 10-question moving average chart (filterable by module) to track your progression over time.
+If you can maintain 120 WPM on a keyboard, you can train your Calculations Per Minute (CPM) just as rigorously. This dashboard reads your answer history (see *Saving your stats* below) to display your overall accuracy, CPM, and a rolling 10-question moving average chart (filterable by module) to track your progression over time.
+
+### Saving your stats
+With no setup, answers go to a local SQLite file (`math_stats.db`). That's fine on your own machine, but Streamlit Community Cloud wipes local files whenever the app restarts, so a hosted copy saves to a Google Sheet instead. Add this to `.streamlit/secrets.toml` locally, or to the app's **Settings → Secrets** on Streamlit Cloud:
+
+```toml
+[gsheet]
+spreadsheet_id = "the-id-from-the-sheet-url"
+worksheet = "mental_math_logs"   # tab name; created automatically if missing
+
+[gcp_service_account]
+# paste the service account JSON key here, as a TOML table
+```
+
+Share the sheet with the service account's `client_email` as an Editor. Sheet writes run in the background, so answering stays instant.
 
 ---
 
