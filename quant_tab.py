@@ -133,6 +133,8 @@ def render() -> None:
     chapter = labels[st.selectbox("New questions from:", list(labels), key="quant_focus",
                                   help="Retests that are due always come first, whatever the chapter.")]
 
+    _handle_bank_pick(chapter)
+
     if done_today and st.session_state.quant_q is None:
         st.success("✅ Today's question is done. Come back tomorrow, or keep going if you want more.")
         if not st.button("Give me another one", key="quant_more"):
@@ -221,12 +223,39 @@ def _day_streak(history: list[dict]) -> int:
     return n
 
 
-def _progress_table(sched: dict, chapter: int | None) -> None:
-    with st.expander("Question bank & schedule"):
+def _bank_items(chapter: int | None) -> list:
+    return [it for it in BANK if chapter is None or chapter_of(it) == chapter]
+
+
+def _table_key(chapter: int | None) -> str:
+    # One key per chapter view: a row index only means something within the list it came from.
+    return f"quant_bank_table_{chapter or 'all'}"
+
+
+def _handle_bank_pick(chapter: int | None) -> None:
+    """Serve a question clicked in the bank table. It runs once per new click, so the
+    selection staying highlighted doesn't keep replacing the question on every rerun."""
+    try:
+        rows = st.session_state[_table_key(chapter)]["selection"]["rows"]
+    except (KeyError, TypeError):
         rows = []
-        for it in BANK:
-            if chapter is not None and chapter_of(it) != chapter:
-                continue
+    if not rows:
+        st.session_state.quant_picked = None
+        return
+    qid = _bank_items(chapter)[rows[0]].id
+    if qid == st.session_state.get("quant_picked"):
+        return
+    st.session_state.quant_picked = qid
+    st.session_state.pop("quant_ans", None)
+    _serve(qid, "📌 Picked from the question bank")
+    st.toast(f"Loaded “{BY_ID[qid].title}” at the top of this tab")
+
+
+def _progress_table(sched: dict, chapter: int | None) -> None:
+    with st.expander("Question bank & schedule", expanded=bool(st.session_state.get("quant_picked"))):
+        st.caption("Tap a row to load that question above. It counts toward your schedule like any other answer.")
+        rows = []
+        for it in _bank_items(chapter):
             s = sched.get(it.id)
             rows.append({
                 "Question": it.title,
@@ -237,4 +266,5 @@ def _progress_table(sched: dict, chapter: int | None) -> None:
                 "In a row": s["box"] if s else 0,
                 "Next due": s["due"].strftime("%d %b") if s else "new",
             })
-        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch",
+                     key=_table_key(chapter), on_select="rerun", selection_mode="single-row")
