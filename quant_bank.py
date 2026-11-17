@@ -363,7 +363,40 @@ BANK: list[Item] = [
          "Do **Light switches** (§2.3). It's an out-of-the-box puzzle, so time-box it to 10 minutes before you read the solution."),
 ]
 
+# --- Extended bank: chapters 3-7 originals + a pointer for every named book problem ---
+import re as _re
+
+from quant_bank_ext import NUMERIC as _EXT_NUMERIC, POINTERS as _POINTERS
+
+for _id, _title, _gb, _lvl, _gen, _kw in _EXT_NUMERIC:
+    BANK.append(_num(_id, _title, _gb, _lvl, _gen, **_kw))
+
+for _sec, _name, _lvl, _topic in _POINTERS:
+    _slug = _re.sub(r"[^a-z0-9]+", "_", _name.lower()).strip("_")
+    _prompt = (f"Work through the problems under **{_name}** (§{_sec}) on paper, then check them against the book."
+               if _topic else
+               f"Solve **{_name}** (§{_sec}) from your copy of the book on paper, then check the book's solution.")
+    BANK.append(_rev(f"gb_{_sec.replace('.', '_')}_{_slug}", _name, f"§{_sec} {_name}", _lvl, _prompt))
+
+
+def section_of(item: Item) -> tuple[int, int]:
+    m = _re.match(r"§(\d+)\.(\d+)", item.gb)
+    return (int(m.group(1)), int(m.group(2))) if m else (99, 99)
+
+
+def chapter_of(item: Item) -> int:
+    return section_of(item)[0]
+
+
+CHAPTERS = {2: "Brain teasers", 3: "Calculus & linear algebra", 4: "Probability",
+            5: "Stochastic processes", 6: "Finance", 7: "Algorithms & numerics"}
+
+# Serving order: by difficulty, then in book order, with new-number questions ahead of book pointers.
+_pos = {it.id: i for i, it in enumerate(BANK)}
+BANK.sort(key=lambda it: (it.level, section_of(it), it.kind != "numeric", _pos[it.id]))
+
 BY_ID = {it.id: it for it in BANK}
+assert len(BY_ID) == len(BANK), "duplicate question ids"
 
 
 def make_instance(item: Item, rng) -> dict:
@@ -372,11 +405,8 @@ def make_instance(item: Item, rng) -> dict:
         return {"prompt": item.prompt}
     inst = item.gen(rng)
     # A generator can tighten/loosen tolerance for its own draw.
-    if "tol" in inst:
-        inst["abs_tol"] = max(item.abs_tol, inst.pop("tol"))
-    else:
-        inst["abs_tol"] = item.abs_tol
-    inst["rel_tol"] = item.rel_tol
+    inst["abs_tol"] = max(item.abs_tol, inst.pop("tol", 0.0))
+    inst["rel_tol"] = max(item.rel_tol, inst.pop("rel", 0.0))
     return inst
 
 

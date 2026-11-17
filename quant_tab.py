@@ -21,7 +21,7 @@ from datetime import date, datetime, timedelta, timezone
 import pandas as pd
 import streamlit as st
 
-from quant_bank import BANK, BY_ID, is_correct, make_instance, parse_answer
+from quant_bank import BANK, BY_ID, CHAPTERS, chapter_of, is_correct, make_instance, parse_answer
 from storage import log_performance, read_logs
 
 PREFIX = "Quant::"
@@ -68,8 +68,9 @@ def _schedule(history: list[dict]) -> dict:
     return state
 
 
-def _pick_next(sched: dict, exclude: set[str]) -> tuple[str, str]:
-    """(qid, reason). Due reviews come first (most overdue first), then the next new question in bank order."""
+def _pick_next(sched: dict, exclude: set[str], chapter: int | None = None) -> tuple[str, str]:
+    """(qid, reason). Due reviews come first (most overdue, from any chapter, so the spacing holds),
+    then the next new question in bank order, limited to `chapter` if one is chosen."""
     t = today()
     due = sorted(
         (s["due"], qid) for qid, s in sched.items()
@@ -81,10 +82,11 @@ def _pick_next(sched: dict, exclude: set[str]) -> tuple[str, str]:
         why = "missed last time" if not s["last_correct"] else f"review, {s['box']} correct in a row"
         return qid, f"🔁 Retest ({why}, last seen {s['last']:%d %b})"
     for it in BANK:
-        if it.id not in sched and it.id not in exclude:
+        if it.id not in sched and it.id not in exclude and (chapter is None or chapter_of(it) == chapter):
             return it.id, "🆕 New question"
     # Everything seen and nothing due: practise the one due soonest.
-    pool = [q for q in sched if q in BY_ID and q not in exclude] or [it.id for it in BANK]
+    pool = ([q for q in sched if q in BY_ID and q not in exclude and (chapter is None or chapter_of(BY_ID[q]) == chapter)]
+            or [it.id for it in BANK if chapter is None or chapter_of(it) == chapter])
     qid = min(pool, key=lambda q: sched.get(q, {}).get("due", t))
     return qid, "➕ Extra practice (nothing due)"
 
@@ -127,14 +129,18 @@ def render() -> None:
     c3.metric("New left", n_new)
     c4.metric("Day streak", _day_streak(history))
 
+    labels = {"All chapters (easiest first)": None, **{f"Ch {c}: {n}": c for c, n in CHAPTERS.items()}}
+    chapter = labels[st.selectbox("New questions from:", list(labels), key="quant_focus",
+                                  help="Retests that are due always come first, whatever the chapter.")]
+
     if done_today and st.session_state.quant_q is None:
         st.success("✅ Today's question is done. Come back tomorrow, or keep going if you want more.")
         if not st.button("Give me another one", key="quant_more"):
-            _progress_table(sched)
+            _progress_table(sched, chapter)
             return
 
     if st.session_state.quant_q is None:
-        _serve(*_pick_next(sched, exclude={r["qid"] for r in done_today}))
+        _serve(*_pick_next(sched, exclude={r["qid"] for r in done_today}, chapter=chapter))
 
     q = st.session_state.quant_q
     item = BY_ID[q["qid"]]
@@ -148,7 +154,7 @@ def render() -> None:
     else:
         _review(q)
 
-    _progress_table(sched)
+    _progress_table(sched, chapter)
 
 
 def _numeric(q, item, inst) -> None:
@@ -215,10 +221,12 @@ def _day_streak(history: list[dict]) -> int:
     return n
 
 
-def _progress_table(sched: dict) -> None:
+def _progress_table(sched: dict, chapter: int | None) -> None:
     with st.expander("Question bank & schedule"):
         rows = []
         for it in BANK:
+            if chapter is not None and chapter_of(it) != chapter:
+                continue
             s = sched.get(it.id)
             rows.append({
                 "Question": it.title,
