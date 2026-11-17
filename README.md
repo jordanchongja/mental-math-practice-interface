@@ -93,3 +93,7 @@ Share the sheet with the service account's `client_email` as an Editor. Sheet wr
 Case math is not about innate genius; it is about pattern recognition and mechanical repetition. Treat this tool like a daily warm-up workbench before you dive into live casing or technical assessments. 
 
 Feel free to fork this repository, add your own custom case scenarios to Tab 5, and adjust the logic to fit your specific prep needs. Happy casing!
+### Quant Practice
+One Green Book–style question a day (*A Practical Guide to Quantitative Finance Interviews*), easiest first. Numeric questions are original templates that draw new numbers every time, so a retest checks the method rather than a remembered answer. Puzzle-type problems that can't take new numbers are listed as pointers to the book's section, and you mark yourself.
+
+Missed questions come back the next day. Each correct answer pushes the next review out further (3 → 7 → 14 → 30 → 60 days). Answers go into the same log as the other tabs (`tab_name = "Quant::<id>"`), so the schedule survives restarts when Google Sheets is configured. Add questions in `quant_bank.py`.
