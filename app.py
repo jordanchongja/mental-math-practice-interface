@@ -140,9 +140,9 @@ st.sidebar.header("Current Session")
 st.sidebar.metric("Total XP", st.session_state.total_xp)
 st.sidebar.metric("Current Streak", st.session_state.streak)
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab_quant, tab7 = st.tabs([
     "Rapid Math", "Rote Memory", "Zero Gravity",
-    "Fraction Simulator", "Market Sizing", "Trading Drills", "Dashboard"
+    "Fraction Simulator", "Market Sizing", "Trading Drills", "Quant Practice", "Dashboard"
 ])
 
 # --- TAB 1: Rapid Arithmetic ---
@@ -1110,6 +1110,11 @@ with tab6:
         m2.metric("Current P&L (25 MT contract)", f"${current_payoff * 25:+,.0f}")
         m3.metric("Breakeven", f"${breakeven:,.0f}")
 
+# --- Quant Practice (Green Book daily question; see quant_tab.py) ---
+with tab_quant:
+    import quant_tab
+    quant_tab.render()
+
 # --- TAB 7: Performance Dashboard ---
 with tab7:
     st.header("Performance Dashboard")
@@ -1118,6 +1123,8 @@ with tab7:
         
         if not df.empty:
             df['timestamp'] = pd.to_datetime(df['timestamp'])
+            # Quant answers are logged per question ("Quant::<id>"); group them as one module here.
+            df['tab_name'] = df['tab_name'].astype(str).where(~df['tab_name'].astype(str).str.startswith("Quant::"), "Quant Practice")
             
             # NEW: Filter by Exercise Module
             tabs_available = df['tab_name'].unique().tolist()
