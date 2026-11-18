@@ -134,11 +134,31 @@ def autofocus_active_input():
 
 # --- UI Setup ---
 st.set_page_config(page_title="Case Math Engine", layout="wide")
-st.title("Mental RAM & Case Math Engine")
 
 st.sidebar.header("Current Session")
-st.sidebar.metric("Total XP", st.session_state.total_xp)
-st.sidebar.metric("Current Streak", st.session_state.streak)
+xp_slot, streak_slot = st.sidebar.empty(), st.sidebar.empty()
+
+def _sidebar_metrics():
+    xp_slot.metric("Total XP", st.session_state.total_xp)
+    streak_slot.metric("Current Streak", st.session_state.streak)
+
+# Two major sections. Only the chosen one runs, so the poker drills don't wait
+# on every math tab re-rendering (and vice versa).
+SECTIONS = ["🧮 Math", "🃏 Poker"]
+if hasattr(st, "segmented_control"):
+    section = st.segmented_control("Section", SECTIONS, default=SECTIONS[0], key="section",
+                                   label_visibility="collapsed") or SECTIONS[0]
+else:
+    section = st.radio("Section", SECTIONS, horizontal=True, key="section", label_visibility="collapsed")
+
+if section == SECTIONS[1]:
+    import poker_tab
+    poker_tab.render()
+    _sidebar_metrics()
+    st.stop()
+
+st.title("Mental RAM & Case Math Engine")
+_sidebar_metrics()
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab_quant, tab7 = st.tabs([
     "Rapid Math", "Rote Memory", "Zero Gravity",
@@ -1125,6 +1145,9 @@ with tab7:
             df['timestamp'] = pd.to_datetime(df['timestamp'])
             # Quant answers are logged per question ("Quant::<id>"); group them as one module here.
             df['tab_name'] = df['tab_name'].astype(str).where(~df['tab_name'].astype(str).str.startswith("Quant::"), "Quant Practice")
+            # Poker answers are logged per spot/hand or question type; group them too.
+            df['tab_name'] = df['tab_name'].where(~df['tab_name'].str.startswith("Poker::PF::"), "Poker Preflop")
+            df['tab_name'] = df['tab_name'].where(~df['tab_name'].str.startswith("Poker::Math::"), "Poker Math")
             
             # NEW: Filter by Exercise Module
             tabs_available = df['tab_name'].unique().tolist()
