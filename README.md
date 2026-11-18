@@ -101,9 +101,18 @@ Missed questions come back the next day. Each correct answer pushes the next rev
 ## 🃏 Poker Trainer
 The second major section (switch at the top of the page: **🧮 Math | 🃏 Poker**). Only the chosen section runs.
 
-- **Preflop Drill** — you're dealt a hand in a spot (opens from every seat, plus BB vs BTN, SB vs BTN, BB vs UTG, BTN vs CO) and tap Raise / 3-bet / Call / Fold. Mixed hands accept any action the chart takes at least 20% of the time. *Borderline hands* mode mostly deals hands on the edge of each chart. Hands you miss come back (across sessions too) until you get them right. After each answer you can open the chart with that hand outlined.
-- **Range Charts** — the 13×13 chart for each spot, colour-coded, with mixed hands shown as split cells.
-- **Poker Math** — endless generated questions: pot odds, MDF, river bluff share, bluff break-even, call EV, counting outs, outs → equity (exact or rule of 2/4), and combos with blockers.
-- **Leaks** — accuracy by spot and the hands you miss most.
+- **Preflop Drill** — dealt a hand in a spot (opens from every seat, plus BB vs BTN, SB vs BTN, BB vs UTG, BTN vs CO), tap Raise / 3-bet / Call / Fold. Mixed hands accept any action the chart takes at least 20% of the time. *Borderline hands* mode mostly deals hands on the edge of each chart. Missed hands come back (across sessions too).
+- **Postflop Drill** — real solver spots: c-bet decisions on the flop, BB facing ⅓- and ¾-pot c-bets, and three turn spots. Graded against solver frequencies, with your hand's equity, the whole range's strategy and a 13×13 chart after each answer.
+- **Board Textures** — quiz built from the solver data: how often the opener c-bets, which size, whose range hits the board, how often BB folds, and which of two boards gets c-bet more.
+- **Equity** — guess your equity: classic preflop all-in matchups, or a hand against the opponent's range on a solved flop.
+- **Poker Math** — pot odds, MDF, river bluff share, bluff break-even, call EV, counting outs, outs → equity, combos with blockers.
+- **Range Charts** / **Flop Explorer** — study views for the preflop charts and every solved flop.
+- **Hand Review** — log hands you played with a verdict and a mistake tag; shows which leaks keep recurring. Saved to a `poker_hands` tab in the Google Sheet (or a table in `math_stats.db` locally).
+- **Leaks** — accuracy by drill, and the preflop hands you miss most.
 
-The charts in `poker_ranges.py` are hand-written approximations of typical solver strategy (6-max cash, 100bb, 2.5bb opens), not solver exports. Edit `SPOTS` there to use charts you trust more. Answers are logged as `Poker::PF::<spot>::<hand>` and `Poker::Math::<type>` in the same log as everything else.
+### Where the poker data comes from
+- **Preflop charts** (`poker_ranges.py`) are hand-written approximations of typical solver strategy (6-max cash, 100bb, 2.5bb opens), not solver exports. Edit `SPOTS` to use charts you trust more.
+- **Postflop** (`data/poker_postflop.json.gz`) is real solver output from [postflop-solver](https://github.com/b-inary/postflop-solver): single-raised pots, BTN or UTG opener vs the BB caller, ranges taken from the preflop charts, solved to under ~1% of the pot. Bet sizes are simplified (flop: 33% / 75% c-bets and a 3x check-raise; turn 66%; river 75%), so it's a solid model of GTO, not every possible line.
+- **Preflop equities** (`data/preflop_equity.json`) are Monte Carlo runs (60k boards per matchup).
+
+Answers are logged in the same log as everything else (`Poker::PF::<spot>::<hand>`, `Poker::Post::...`, `Poker::Texture::...`, `Poker::Equity::...`, `Poker::Math::...`).

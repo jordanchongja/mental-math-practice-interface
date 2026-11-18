@@ -1148,6 +1148,9 @@ with tab7:
             # Poker answers are logged per spot/hand or question type; group them too.
             df['tab_name'] = df['tab_name'].where(~df['tab_name'].str.startswith("Poker::PF::"), "Poker Preflop")
             df['tab_name'] = df['tab_name'].where(~df['tab_name'].str.startswith("Poker::Math::"), "Poker Math")
+            df['tab_name'] = df['tab_name'].where(~df['tab_name'].str.startswith("Poker::Post::"), "Poker Postflop")
+            df['tab_name'] = df['tab_name'].where(~df['tab_name'].str.startswith("Poker::Texture::"), "Poker Board Textures")
+            df['tab_name'] = df['tab_name'].where(~df['tab_name'].str.startswith("Poker::Equity::"), "Poker Equity")
             
             # NEW: Filter by Exercise Module
             tabs_available = df['tab_name'].unique().tolist()

@@ -101,3 +101,53 @@ def read_logs() -> pd.DataFrame:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
     df["is_correct"] = df["is_correct"].astype(int)
     return df
+
+
+# --- Poker hand reviews --------------------------------------------------
+# Same backend choice as the answer log: a "poker_hands" tab in the Google
+# Sheet when configured, otherwise a table in math_stats.db.
+
+HAND_COLUMNS = ["timestamp", "game", "position", "hero_hand", "villain", "board", "line",
+                "decision", "verdict", "tag", "notes"]
+
+
+@st.cache_resource
+def _hands_worksheet():
+    import gspread
+    ws_name = st.secrets["gsheet"].get("hands_worksheet", "poker_hands")
+    sheet = _worksheet().spreadsheet
+    try:
+        return sheet.worksheet(ws_name)
+    except gspread.WorksheetNotFound:
+        ws = sheet.add_worksheet(title=ws_name, rows=500, cols=len(HAND_COLUMNS))
+        ws.append_row(HAND_COLUMNS)
+        return ws
+
+
+def _hands_db():
+    conn = sqlite3.connect(DB_NAME)
+    conn.execute("CREATE TABLE IF NOT EXISTS poker_hands (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                 + ", ".join(f"{c} TEXT" for c in HAND_COLUMNS) + ")")
+    return conn
+
+
+def save_hand(row: dict) -> None:
+    row = {c: str(row.get(c, "")) for c in HAND_COLUMNS}
+    row["timestamp"] = row["timestamp"] or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    if _sheets_configured():
+        _writer().submit(_hands_worksheet().append_row, [row[c] for c in HAND_COLUMNS], value_input_option="RAW")
+        return
+    conn = _hands_db()
+    conn.execute(f"INSERT INTO poker_hands ({', '.join(HAND_COLUMNS)}) VALUES ({', '.join('?' * len(HAND_COLUMNS))})",
+                 [row[c] for c in HAND_COLUMNS])
+    conn.commit()
+    conn.close()
+
+
+def read_hands() -> pd.DataFrame:
+    if _sheets_configured():
+        return pd.DataFrame(_hands_worksheet().get_all_records(), columns=HAND_COLUMNS)
+    conn = _hands_db()
+    df = pd.read_sql_query(f"SELECT {', '.join(HAND_COLUMNS)} FROM poker_hands", conn)
+    conn.close()
+    return df

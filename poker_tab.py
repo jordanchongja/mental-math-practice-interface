@@ -504,6 +504,7 @@ def _leaks() -> None:
     by_spot: dict[str, list[bool]] = defaultdict(list)
     by_hand: dict[tuple[str, str], list[bool]] = defaultdict(list)
     by_math: dict[str, list[bool]] = defaultdict(list)
+    by_other: dict[str, list[bool]] = defaultdict(list)
     for r in hist:
         n = r["name"]
         if n.startswith(PF_PREFIX):
@@ -515,6 +516,10 @@ def _leaks() -> None:
             by_hand[(spot, hand)].append(r["correct"])
         elif n.startswith(MATH_PREFIX):
             by_math[n[len(MATH_PREFIX):]].append(r["correct"])
+        else:   # Poker::Post::..., Poker::Texture::..., Poker::Equity::...
+            parts = n.split("::")
+            if len(parts) >= 3:
+                by_other[f"{parts[1]}: {parts[2]}"].append(r["correct"])
 
     if by_spot:
         st.subheader("Preflop accuracy by spot")
@@ -534,6 +539,13 @@ def _leaks() -> None:
                 for (s, h), n in misses.most_common(20)
             ]), hide_index=True, width="stretch")
 
+    if by_other:
+        st.subheader("Postflop, board texture and equity accuracy")
+        st.dataframe(pd.DataFrame([
+            {"Drill": k, "Answers": len(v), "Correct": f"{sum(v) / len(v):.0%}"}
+            for k, v in sorted(by_other.items(), key=lambda kv: sum(kv[1]) / len(kv[1]))
+        ]), hide_index=True, width="stretch")
+
     if by_math:
         st.subheader("Poker math accuracy")
         st.dataframe(pd.DataFrame([
@@ -551,12 +563,26 @@ def render() -> None:
     if "poker_history" not in st.session_state:
         st.session_state.poker_history = _load_history()
 
-    t_drill, t_charts, t_math, t_leaks = st.tabs(["Preflop Drill", "Range Charts", "Poker Math", "Leaks"])
-    with t_drill:
+    import poker_postflop as pp
+    import poker_review
+
+    tabs = st.tabs(["Preflop Drill", "Postflop Drill", "Board Textures", "Equity", "Poker Math",
+                    "Range Charts", "Flop Explorer", "Hand Review", "Leaks"])
+    with tabs[0]:
         _preflop_drill()
-    with t_charts:
-        _charts()
-    with t_math:
+    with tabs[1]:
+        pp.postflop_drill()
+    with tabs[2]:
+        pp.texture_quiz()
+    with tabs[3]:
+        pp.equity_trainer()
+    with tabs[4]:
         _poker_math()
-    with t_leaks:
+    with tabs[5]:
+        _charts()
+    with tabs[6]:
+        pp.flop_explorer()
+    with tabs[7]:
+        poker_review.hand_review()
+    with tabs[8]:
         _leaks()
