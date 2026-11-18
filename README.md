@@ -97,3 +97,13 @@ Feel free to fork this repository, add your own custom case scenarios to Tab 5, 
 One Green Book–style question a day (*A Practical Guide to Quantitative Finance Interviews*), easiest first. Numeric questions are original templates that draw new numbers every time, so a retest checks the method rather than a remembered answer. The bank covers every chapter (2–7): 57 question types that get new numbers each time, plus a pointer card for every named problem in the book (145, using 1st-edition section numbers). For a pointer card you solve that problem from your copy and mark yourself. You can limit new questions to one chapter; retests that are due always come first.
 
 Missed questions come back the next day. Each correct answer pushes the next review out further (3 → 7 → 14 → 30 → 60 days). Answers go into the same log as the other tabs (`tab_name = "Quant::<id>"`), so the schedule survives restarts when Google Sheets is configured. Add questions in `quant_bank.py` / `quant_bank_ext.py`.
+
+## 🃏 Poker Trainer
+The second major section (switch at the top of the page: **🧮 Math | 🃏 Poker**). Only the chosen section runs.
+
+- **Preflop Drill** — you're dealt a hand in a spot (opens from every seat, plus BB vs BTN, SB vs BTN, BB vs UTG, BTN vs CO) and tap Raise / 3-bet / Call / Fold. Mixed hands accept any action the chart takes at least 20% of the time. *Borderline hands* mode mostly deals hands on the edge of each chart. Hands you miss come back (across sessions too) until you get them right. After each answer you can open the chart with that hand outlined.
+- **Range Charts** — the 13×13 chart for each spot, colour-coded, with mixed hands shown as split cells.
+- **Poker Math** — endless generated questions: pot odds, MDF, river bluff share, bluff break-even, call EV, counting outs, outs → equity (exact or rule of 2/4), and combos with blockers.
+- **Leaks** — accuracy by spot and the hands you miss most.
+
+The charts in `poker_ranges.py` are hand-written approximations of typical solver strategy (6-max cash, 100bb, 2.5bb opens), not solver exports. Edit `SPOTS` there to use charts you trust more. Answers are logged as `Poker::PF::<spot>::<hand>` and `Poker::Math::<type>` in the same log as everything else.
